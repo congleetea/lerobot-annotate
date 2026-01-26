@@ -484,20 +484,19 @@ newRepoRow.style.display = pushInPlace.checked ? 'none' : 'flex';
 pushHubBtn.addEventListener('click', async () => {
   const token = hfToken.value.trim();
   if (!token) {
-    pushHubStatus.textContent = 'Please enter your Hugging Face token';
-    pushHubStatus.style.color = '#f97316';
+    showPushStatus('error', 'Please enter your Hugging Face token');
     return;
   }
 
   if (!pushInPlace.checked && !newRepoId.value.trim()) {
-    pushHubStatus.textContent = 'Please enter a new repo ID or check "Push to original repo"';
-    pushHubStatus.style.color = '#f97316';
+    showPushStatus('error', 'Please enter a new repo ID or check "Push to original repo"');
     return;
   }
 
-  pushHubStatus.textContent = 'Pushing to Hub... This may take a while for large datasets.';
-  pushHubStatus.style.color = '#94a3b8';
+  // Show loading state
+  showPushStatus('loading', 'Pushing to Hub... This may take a while for large datasets.');
   pushHubBtn.disabled = true;
+  pushHubBtn.innerHTML = '<span class="spinner"></span> Pushing...';
 
   try {
     const payload = {
@@ -517,18 +516,45 @@ pushHubBtn.addEventListener('click', async () => {
     const data = await res.json();
     
     if (res.ok) {
-      pushHubStatus.innerHTML = `✓ ${data.message} - <a href="${data.url}" target="_blank">View on Hub →</a>`;
-      pushHubStatus.style.color = '#22c55e';
+      showPushStatus('success', `${data.message}`, data.url);
     } else {
-      pushHubStatus.textContent = data.detail || 'Push failed';
-      pushHubStatus.style.color = '#f97316';
+      showPushStatus('error', data.detail || 'Push failed. Please check your token and try again.');
     }
   } catch (err) {
-    pushHubStatus.textContent = `Error: ${err.message}`;
-    pushHubStatus.style.color = '#f97316';
+    showPushStatus('error', `Network error: ${err.message}. Please check your connection and try again.`);
   } finally {
     pushHubBtn.disabled = false;
+    pushHubBtn.textContent = 'Push to Hub';
   }
 });
+
+function showPushStatus(type, message, url = null) {
+  pushHubStatus.className = `helper status-${type}`;
+  
+  if (type === 'loading') {
+    pushHubStatus.innerHTML = `<span class="spinner"></span> ${message}`;
+  } else if (type === 'success') {
+    pushHubStatus.innerHTML = `
+      <div class="status-box status-success">
+        <span class="status-icon">✓</span>
+        <div class="status-content">
+          <strong>Success!</strong>
+          <p>${message}</p>
+          ${url ? `<a href="${url}" target="_blank" class="status-link">View on Hugging Face Hub →</a>` : ''}
+        </div>
+      </div>
+    `;
+  } else if (type === 'error') {
+    pushHubStatus.innerHTML = `
+      <div class="status-box status-error">
+        <span class="status-icon">✗</span>
+        <div class="status-content">
+          <strong>Error</strong>
+          <p>${message}</p>
+        </div>
+      </div>
+    `;
+  }
+}
 
 workspace.style.display = 'none';
