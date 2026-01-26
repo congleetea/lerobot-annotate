@@ -1,3 +1,5 @@
+console.log('[App] Script starting...');
+
 const statusEl = document.getElementById('status');
 const connectForm = document.getElementById('connectForm');
 const sourceSelect = document.getElementById('sourceSelect');
@@ -52,6 +54,13 @@ const privateRepo = document.getElementById('privateRepo');
 const commitMessage = document.getElementById('commitMessage');
 const pushHubBtn = document.getElementById('pushHubBtn');
 const pushHubStatus = document.getElementById('pushHubStatus');
+
+console.log('[App] Push to Hub elements:', { 
+  pushHubBtn: !!pushHubBtn, 
+  hfToken: !!hfToken, 
+  pushHubStatus: !!pushHubStatus,
+  pushInPlace: !!pushInPlace 
+});
 
 const tabs = document.querySelectorAll('.tab');
 const tabPanels = document.querySelectorAll('.tab-panel');
@@ -592,3 +601,5 @@ function showPushStatus(type, message, url = null) {
 }
 
 workspace.style.display = 'none';
+
+console.log('[App] Script fully loaded and initialized');
