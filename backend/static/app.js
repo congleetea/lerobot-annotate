@@ -297,7 +297,20 @@ async function selectEpisode(epIdx) {
     high_levels: data.high_levels || [],
   };
 
-  episodeVideo.src = `/api/video/${epIdx}?video_key=${encodeURIComponent(state.dataset.selected_video_key)}`;
+  // Build video URL with media fragment for the episode time range
+  // This tells the browser to only play the specified portion
+  const videoUrl = `/api/video/${epIdx}?video_key=${encodeURIComponent(state.dataset.selected_video_key)}`;
+  if (ep && (ep.video_start_time > 0 || ep.video_end_time > 0)) {
+    // Use Media Fragments URI to specify the time range
+    // Format: #t=start,end (in seconds)
+    const fragmentUrl = `${videoUrl}#t=${ep.video_start_time.toFixed(2)},${ep.video_end_time.toFixed(2)}`;
+    console.log(`Episode ${epIdx}: video_start=${ep.video_start_time}, video_end=${ep.video_end_time}, url=${fragmentUrl}`);
+    episodeVideo.src = fragmentUrl;
+  } else {
+    console.log(`Episode ${epIdx}: no video timing info, using full video`);
+    episodeVideo.src = videoUrl;
+  }
+  
   resetEpisodeForm();
   renderEpisodes();
   renderSubtasks();
@@ -436,25 +449,56 @@ episodeSearch.addEventListener('input', renderEpisodes);
 
 episodeVideo.addEventListener('loadedmetadata', () => {
   // Seek to the correct start position for this episode (for concatenated videos)
-  if (state.currentEpisodeData && state.currentEpisodeData.video_start_time > 0) {
-    episodeVideo.currentTime = state.currentEpisodeData.video_start_time;
+  if (state.currentEpisodeData) {
+    const startTime = state.currentEpisodeData.video_start_time || 0;
+    if (startTime > 0 && Math.abs(episodeVideo.currentTime - startTime) > 0.1) {
+      episodeVideo.currentTime = startTime;
+    }
   }
   renderTimeline();
+});
+
+// Also handle the 'canplay' event to ensure seeking works
+episodeVideo.addEventListener('canplay', () => {
+  if (state.currentEpisodeData) {
+    const startTime = state.currentEpisodeData.video_start_time || 0;
+    // Only seek if we're not already at the right position (within tolerance)
+    if (startTime > 0 && Math.abs(episodeVideo.currentTime - startTime) > 0.5) {
+      episodeVideo.currentTime = startTime;
+    }
+  }
 });
 
 // Stop playback when reaching the end of the episode (for concatenated videos)
 episodeVideo.addEventListener('timeupdate', () => {
   if (state.currentEpisodeData) {
-    const endTime = state.currentEpisodeData.video_end_time;
+    const startTime = state.currentEpisodeData.video_start_time || 0;
+    const endTime = state.currentEpisodeData.video_end_time || episodeVideo.duration;
+    
     // If we've passed the episode end time, pause and seek back to end
-    if (episodeVideo.currentTime >= endTime) {
+    if (episodeVideo.currentTime >= endTime - 0.05) {
       episodeVideo.pause();
-      episodeVideo.currentTime = endTime - 0.01; // Stay just before the end
+      episodeVideo.currentTime = endTime - 0.1; // Stay just before the end
     }
-    // If somehow we're before the start (shouldn't happen), seek to start
-    const startTime = state.currentEpisodeData.video_start_time;
+    
+    // If somehow we're before the start, seek to start
+    if (episodeVideo.currentTime < startTime - 0.1) {
+      episodeVideo.currentTime = startTime;
+    }
+  }
+});
+
+// Handle seeking - prevent seeking outside episode bounds
+episodeVideo.addEventListener('seeking', () => {
+  if (state.currentEpisodeData) {
+    const startTime = state.currentEpisodeData.video_start_time || 0;
+    const endTime = state.currentEpisodeData.video_end_time || episodeVideo.duration;
+    
+    // Clamp to episode bounds
     if (episodeVideo.currentTime < startTime) {
       episodeVideo.currentTime = startTime;
+    } else if (episodeVideo.currentTime > endTime) {
+      episodeVideo.currentTime = endTime - 0.1;
     }
   }
 });

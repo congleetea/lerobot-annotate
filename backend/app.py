@@ -220,51 +220,43 @@ class DataManager:
         }
 
     def _calculate_video_offsets(self, video_key: str, fps: float) -> dict[int, dict[str, float]]:
-        """Calculate start/end times for each episode within its video file.
+        """Get start/end times for each episode within its video file.
         
-        In LeRobot datasets, videos can be concatenated so multiple episodes share
-        the same video file. This method calculates the correct timestamps for each episode.
+        In LeRobot datasets, videos are concatenated so multiple episodes share
+        the same video file. The timestamps are stored directly in the episode metadata
+        as 'videos/{video_key}/from_timestamp' and 'videos/{video_key}/to_timestamp'.
         """
         if self.episodes_df is None:
             return {}
         
-        chunk_col = f"videos/{video_key}/chunk_index"
-        file_col = f"videos/{video_key}/file_index"
+        from_ts_col = f"videos/{video_key}/from_timestamp"
+        to_ts_col = f"videos/{video_key}/to_timestamp"
         
-        if chunk_col not in self.episodes_df.columns or file_col not in self.episodes_df.columns:
-            # Fallback: assume each episode is its own video file
-            result = {}
-            for _, row in self.episodes_df.iterrows():
-                ep_idx = int(row["episode_index"])
-                length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
-                duration = length / fps if fps else 0.0
-                result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
-            return result
-        
-        # Group episodes by their video file (chunk_index, file_index)
-        df = self.episodes_df.copy()
-        df["_video_file_key"] = df[chunk_col].astype(str) + "_" + df[file_col].astype(str)
-        df = df.sort_values("episode_index")
+        # Check if timestamp columns exist in the dataframe
+        has_timestamp_cols = from_ts_col in self.episodes_df.columns and to_ts_col in self.episodes_df.columns
         
         result = {}
-        for video_file_key, group in df.groupby("_video_file_key"):
-            # Sort episodes within this video file by episode_index
-            group = group.sort_values("episode_index")
-            cumulative_frames = 0
+        for _, row in self.episodes_df.iterrows():
+            ep_idx = int(row["episode_index"])
+            length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+            duration = length / fps if fps else 0.0
             
-            for _, row in group.iterrows():
-                ep_idx = int(row["episode_index"])
-                length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
-                
-                start_time = cumulative_frames / fps if fps else 0.0
-                end_time = (cumulative_frames + length) / fps if fps else 0.0
-                
-                result[ep_idx] = {
-                    "video_start_time": start_time,
-                    "video_end_time": end_time,
-                }
-                
-                cumulative_frames += length
+            # Use the actual timestamps from the episode metadata if available
+            if has_timestamp_cols:
+                from_ts = row.get(from_ts_col)
+                to_ts = row.get(to_ts_col)
+                # Handle NaN/None values
+                if pd.notna(from_ts) and pd.notna(to_ts):
+                    result[ep_idx] = {
+                        "video_start_time": float(from_ts),
+                        "video_end_time": float(to_ts),
+                    }
+                else:
+                    # Fallback if timestamps are null
+                    result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
+            else:
+                # Fallback: assume each episode starts at 0 (individual video file per episode)
+                result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
         
         return result
 
@@ -564,6 +556,17 @@ def export_dataset(payload: dict[str, Any]) -> JSONResponse:
     copy_videos = bool(payload.get("copy_videos", False))
     result = manager.export_dataset(output_dir=output_dir, copy_videos=copy_videos)
     return JSONResponse(result)
+
+
+@app.get("/api/debug/columns")
+def debug_columns() -> JSONResponse:
+    """Debug endpoint to see what columns are available in the episodes dataframe."""
+    if manager.episodes_df is None:
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    return JSONResponse({
+        "columns": list(manager.episodes_df.columns),
+        "sample_row": manager.episodes_df.iloc[0].to_dict() if len(manager.episodes_df) > 0 else {},
+    })
 
 
 @app.get("/api/episodes/{episode_index}/video_timing")
