@@ -666,6 +666,45 @@ def push_to_hub(payload: PushToHubRequest) -> JSONResponse:
         print(f"[Push to Hub] Error: Source is '{manager.source}', not 'hf'")
         raise HTTPException(status_code=400, detail="Can only push to Hub for datasets loaded from Hub")
     
+    # Download data files if they don't exist (they weren't downloaded during initial load)
+    data_dir = manager.dataset_root / "data"
+    data_files_exist = data_dir.exists() and list(data_dir.rglob("*.parquet"))
+    if not data_files_exist:
+        print("[Push to Hub] Data files not found locally, downloading from Hub...")
+        if not manager.repo_id:
+            raise HTTPException(status_code=400, detail="No repo ID available to download data files")
+        try:
+            snapshot_download(
+                manager.repo_id,
+                repo_type="dataset",
+                revision=manager.revision,
+                local_dir=manager.dataset_root,
+                allow_patterns=["data/**/*.parquet"],
+            )
+            print("[Push to Hub] Data files downloaded successfully")
+        except Exception as e:
+            print(f"[Push to Hub] Error downloading data files: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to download data files: {str(e)}")
+    
+    # Download videos if they don't exist (we always copy videos when pushing to hub)
+    videos_dir = manager.dataset_root / "videos"
+    if not videos_dir.exists():
+        print("[Push to Hub] Videos not found locally, downloading from Hub...")
+        if not manager.repo_id:
+            raise HTTPException(status_code=400, detail="No repo ID available to download videos")
+        try:
+            snapshot_download(
+                manager.repo_id,
+                repo_type="dataset",
+                revision=manager.revision,
+                local_dir=manager.dataset_root,
+                allow_patterns=["videos/**/*.mp4"],
+            )
+            print("[Push to Hub] Videos downloaded successfully")
+        except Exception as e:
+            print(f"[Push to Hub] Warning: Could not download videos: {e}")
+            # Videos are optional, so we continue even if download fails
+    
     # First, export the dataset locally
     print("[Push to Hub] Exporting dataset locally...")
     export_result = manager.export_dataset(copy_videos=True)
