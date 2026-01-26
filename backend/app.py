@@ -185,15 +185,27 @@ class DataManager:
     def _build_summary(self) -> dict[str, Any]:
         assert self.info and self.episodes_df is not None
         fps = float(self.info.get("fps", 30))
+        video_key = self.video_key or self._get_video_keys()[0] if self._get_video_keys() else None
+        
+        # Calculate video offsets for each episode (for concatenated videos)
+        episode_video_offsets = self._calculate_video_offsets(video_key, fps) if video_key else {}
+        
         episodes = []
         for _, row in self.episodes_df.iterrows():
             length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
             duration = length / fps if fps else 0.0
+            ep_idx = int(row["episode_index"])
+            
+            # Get video timing info for this episode
+            video_info = episode_video_offsets.get(ep_idx, {"video_start_time": 0.0, "video_end_time": duration})
+            
             episodes.append(
                 {
-                    "episode_index": int(row["episode_index"]),
+                    "episode_index": ep_idx,
                     "length": length,
                     "duration": duration,
+                    "video_start_time": video_info["video_start_time"],
+                    "video_end_time": video_info["video_end_time"],
                 }
             )
         return {
@@ -206,6 +218,55 @@ class DataManager:
             "selected_video_key": self.video_key,
             "episodes": episodes,
         }
+
+    def _calculate_video_offsets(self, video_key: str, fps: float) -> dict[int, dict[str, float]]:
+        """Calculate start/end times for each episode within its video file.
+        
+        In LeRobot datasets, videos can be concatenated so multiple episodes share
+        the same video file. This method calculates the correct timestamps for each episode.
+        """
+        if self.episodes_df is None:
+            return {}
+        
+        chunk_col = f"videos/{video_key}/chunk_index"
+        file_col = f"videos/{video_key}/file_index"
+        
+        if chunk_col not in self.episodes_df.columns or file_col not in self.episodes_df.columns:
+            # Fallback: assume each episode is its own video file
+            result = {}
+            for _, row in self.episodes_df.iterrows():
+                ep_idx = int(row["episode_index"])
+                length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+                duration = length / fps if fps else 0.0
+                result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
+            return result
+        
+        # Group episodes by their video file (chunk_index, file_index)
+        df = self.episodes_df.copy()
+        df["_video_file_key"] = df[chunk_col].astype(str) + "_" + df[file_col].astype(str)
+        df = df.sort_values("episode_index")
+        
+        result = {}
+        for video_file_key, group in df.groupby("_video_file_key"):
+            # Sort episodes within this video file by episode_index
+            group = group.sort_values("episode_index")
+            cumulative_frames = 0
+            
+            for _, row in group.iterrows():
+                ep_idx = int(row["episode_index"])
+                length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+                
+                start_time = cumulative_frames / fps if fps else 0.0
+                end_time = (cumulative_frames + length) / fps if fps else 0.0
+                
+                result[ep_idx] = {
+                    "video_start_time": start_time,
+                    "video_end_time": end_time,
+                }
+                
+                cumulative_frames += length
+        
+        return result
 
     def get_episode_video_path(self, episode_index: int, video_key: str | None = None) -> Path:
         if self.episodes_df is None or self.info is None:
@@ -503,6 +564,42 @@ def export_dataset(payload: dict[str, Any]) -> JSONResponse:
     copy_videos = bool(payload.get("copy_videos", False))
     result = manager.export_dataset(output_dir=output_dir, copy_videos=copy_videos)
     return JSONResponse(result)
+
+
+@app.get("/api/episodes/{episode_index}/video_timing")
+def get_episode_video_timing(episode_index: int, video_key: str | None = None) -> JSONResponse:
+    """Get video timing information for a specific episode.
+    
+    Returns the start and end timestamps within the video file for this episode.
+    This is needed because LeRobot datasets concatenate videos for faster reading.
+    """
+    if manager.episodes_df is None or manager.info is None:
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    
+    video_key = video_key or manager.video_key
+    fps = float(manager.info.get("fps", 30))
+    
+    # Get the episode row
+    row = manager.episodes_df[manager.episodes_df["episode_index"] == episode_index]
+    if row.empty:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_index} not found")
+    row = row.iloc[0]
+    
+    length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+    duration = length / fps if fps else 0.0
+    
+    # Calculate video offset
+    video_offsets = manager._calculate_video_offsets(video_key, fps) if video_key else {}
+    video_info = video_offsets.get(episode_index, {"video_start_time": 0.0, "video_end_time": duration})
+    
+    return JSONResponse({
+        "episode_index": episode_index,
+        "fps": fps,
+        "length": length,
+        "duration": duration,
+        "video_start_time": video_info["video_start_time"],
+        "video_end_time": video_info["video_end_time"],
+    })
 
 
 @app.get("/api/video/{episode_index}")

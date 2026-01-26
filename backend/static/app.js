@@ -50,6 +50,7 @@ const state = {
   dataset: null,
   episodes: [],
   currentEpisode: null,
+  currentEpisodeData: null, // Store the full episode data including video timing
   annotations: {},
 };
 
@@ -71,7 +72,24 @@ function formatDuration(seconds) {
 }
 
 function currentTime() {
-  return Number(episodeVideo.currentTime.toFixed(2));
+  // Return time relative to episode start (for concatenated videos)
+  const videoStartTime = state.currentEpisodeData?.video_start_time || 0;
+  const relativeTime = episodeVideo.currentTime - videoStartTime;
+  return Number(Math.max(0, relativeTime).toFixed(2));
+}
+
+function absoluteTime(relativeTime) {
+  // Convert relative episode time to absolute video time
+  const videoStartTime = state.currentEpisodeData?.video_start_time || 0;
+  return videoStartTime + relativeTime;
+}
+
+function getEpisodeDuration() {
+  // Get the duration of the current episode (not the full video)
+  if (state.currentEpisodeData) {
+    return state.currentEpisodeData.video_end_time - state.currentEpisodeData.video_start_time;
+  }
+  return episodeVideo.duration || 0;
 }
 
 function resetEpisodeForm() {
@@ -117,7 +135,8 @@ function renderTimeline() {
   if (!state.currentEpisode) return;
   const ann = getEpisodeAnnotations(state.currentEpisode);
   const segments = ann.subtasks;
-  const duration = episodeVideo.duration || 0;
+  // Use episode duration (not full video duration) for timeline
+  const duration = getEpisodeDuration();
   if (!duration || segments.length === 0) return;
 
   segments.forEach(seg => {
@@ -268,6 +287,7 @@ async function selectEpisode(epIdx) {
   state.currentEpisode = epIdx;
   episodeTitle.textContent = `Episode ${epIdx}`;
   const ep = state.episodes.find(e => e.episode_index === epIdx);
+  state.currentEpisodeData = ep || null;
   episodeMeta.textContent = ep ? `${ep.length} frames • ${formatDuration(ep.duration)}` : '';
 
   const res = await fetch(`/api/episodes/${epIdx}/annotations`);
@@ -415,7 +435,28 @@ resetEpisodeBtn.addEventListener('click', () => {
 episodeSearch.addEventListener('input', renderEpisodes);
 
 episodeVideo.addEventListener('loadedmetadata', () => {
+  // Seek to the correct start position for this episode (for concatenated videos)
+  if (state.currentEpisodeData && state.currentEpisodeData.video_start_time > 0) {
+    episodeVideo.currentTime = state.currentEpisodeData.video_start_time;
+  }
   renderTimeline();
+});
+
+// Stop playback when reaching the end of the episode (for concatenated videos)
+episodeVideo.addEventListener('timeupdate', () => {
+  if (state.currentEpisodeData) {
+    const endTime = state.currentEpisodeData.video_end_time;
+    // If we've passed the episode end time, pause and seek back to end
+    if (episodeVideo.currentTime >= endTime) {
+      episodeVideo.pause();
+      episodeVideo.currentTime = endTime - 0.01; // Stay just before the end
+    }
+    // If somehow we're before the start (shouldn't happen), seek to start
+    const startTime = state.currentEpisodeData.video_start_time;
+    if (episodeVideo.currentTime < startTime) {
+      episodeVideo.currentTime = startTime;
+    }
+  }
 });
 
 tabs.forEach(tab => {
