@@ -655,31 +655,44 @@ def push_to_hub(payload: PushToHubRequest) -> JSONResponse:
     
     Can either update the original repo in place, or push to a new repo.
     """
+    print("[Push to Hub] Received push request")
+    print(f"[Push to Hub] push_in_place={payload.push_in_place}, new_repo_id={payload.new_repo_id}")
+    
     if manager.dataset_root is None or manager.info is None:
+        print("[Push to Hub] Error: Dataset not loaded")
         raise HTTPException(status_code=400, detail="Dataset not loaded")
     
     if manager.source != "hf":
+        print(f"[Push to Hub] Error: Source is '{manager.source}', not 'hf'")
         raise HTTPException(status_code=400, detail="Can only push to Hub for datasets loaded from Hub")
     
     # First, export the dataset locally
+    print("[Push to Hub] Exporting dataset locally...")
     export_result = manager.export_dataset(copy_videos=True)
     export_dir = Path(export_result["output_dir"])
+    print(f"[Push to Hub] Exported to: {export_dir}")
     
     # Determine target repo
     if payload.push_in_place:
         if not manager.repo_id:
+            print("[Push to Hub] Error: No original repo ID found")
             raise HTTPException(status_code=400, detail="No original repo ID found")
         target_repo = manager.repo_id
     else:
         if not payload.new_repo_id:
+            print("[Push to Hub] Error: New repo ID is required")
             raise HTTPException(status_code=400, detail="New repo ID is required when not pushing in place")
         target_repo = payload.new_repo_id
     
+    print(f"[Push to Hub] Target repo: {target_repo}")
+    
     try:
+        print("[Push to Hub] Initializing HfApi...")
         api = HfApi(token=payload.hf_token)
         
         # Create repo if pushing to new location
         if not payload.push_in_place:
+            print(f"[Push to Hub] Creating new repo: {target_repo}")
             try:
                 api.create_repo(
                     repo_id=target_repo,
@@ -687,10 +700,13 @@ def push_to_hub(payload: PushToHubRequest) -> JSONResponse:
                     private=payload.private,
                     exist_ok=True,
                 )
+                print("[Push to Hub] Repo created successfully")
             except Exception as e:
+                print(f"[Push to Hub] Error creating repo: {e}")
                 raise HTTPException(status_code=400, detail=f"Failed to create repo: {str(e)}")
         
         # Upload the entire exported directory
+        print(f"[Push to Hub] Uploading folder to {target_repo}...")
         api.upload_folder(
             folder_path=str(export_dir),
             repo_id=target_repo,
@@ -698,6 +714,7 @@ def push_to_hub(payload: PushToHubRequest) -> JSONResponse:
             commit_message=payload.commit_message,
         )
         
+        print(f"[Push to Hub] Successfully pushed to {target_repo}")
         return JSONResponse({
             "ok": True,
             "repo_id": target_repo,
@@ -708,6 +725,7 @@ def push_to_hub(payload: PushToHubRequest) -> JSONResponse:
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[Push to Hub] Error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to push to Hub: {str(e)}")
 
 

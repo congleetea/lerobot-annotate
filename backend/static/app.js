@@ -473,62 +473,96 @@ exportBtn.addEventListener('click', async () => {
 });
 
 // Toggle new repo input visibility based on push in place checkbox
-pushInPlace.addEventListener('change', () => {
+if (pushInPlace && newRepoRow) {
+  pushInPlace.addEventListener('change', () => {
+    newRepoRow.style.display = pushInPlace.checked ? 'none' : 'flex';
+  });
+  // Initialize visibility
   newRepoRow.style.display = pushInPlace.checked ? 'none' : 'flex';
-});
-
-// Initialize visibility
-newRepoRow.style.display = pushInPlace.checked ? 'none' : 'flex';
+}
 
 // Push to Hub handler
-pushHubBtn.addEventListener('click', async () => {
-  const token = hfToken.value.trim();
-  if (!token) {
-    showPushStatus('error', 'Please enter your Hugging Face token');
-    return;
-  }
-
-  if (!pushInPlace.checked && !newRepoId.value.trim()) {
-    showPushStatus('error', 'Please enter a new repo ID or check "Push to original repo"');
-    return;
-  }
-
-  // Show loading state
-  showPushStatus('loading', 'Pushing to Hub... This may take a while for large datasets.');
-  pushHubBtn.disabled = true;
-  pushHubBtn.innerHTML = '<span class="spinner"></span> Pushing...';
-
-  try {
-    const payload = {
-      hf_token: token,
-      push_in_place: pushInPlace.checked,
-      new_repo_id: pushInPlace.checked ? null : newRepoId.value.trim(),
-      private: privateRepo.checked,
-      commit_message: commitMessage.value.trim() || 'Add annotations from LeRobot Annotate',
-    };
-
-    const res = await fetch('/api/push_to_hub', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
+if (pushHubBtn) {
+  console.log('[Push to Hub] Button found, attaching click handler');
+  
+  pushHubBtn.addEventListener('click', async () => {
+    console.log('[Push to Hub] Button clicked');
     
-    if (res.ok) {
-      showPushStatus('success', `${data.message}`, data.url);
-    } else {
-      showPushStatus('error', data.detail || 'Push failed. Please check your token and try again.');
+    // Check if elements exist
+    if (!hfToken || !pushHubStatus) {
+      console.error('[Push to Hub] Missing DOM elements:', { hfToken, pushHubStatus });
+      alert('Error: Missing form elements. Please refresh the page.');
+      return;
     }
-  } catch (err) {
-    showPushStatus('error', `Network error: ${err.message}. Please check your connection and try again.`);
-  } finally {
-    pushHubBtn.disabled = false;
-    pushHubBtn.textContent = 'Push to Hub';
-  }
-});
+    
+    const token = hfToken.value.trim();
+    console.log('[Push to Hub] Token provided:', token ? 'Yes (hidden)' : 'No');
+    
+    if (!token) {
+      showPushStatus('error', 'Please enter your Hugging Face token');
+      return;
+    }
+
+    if (!pushInPlace.checked && !newRepoId.value.trim()) {
+      showPushStatus('error', 'Please enter a new repo ID or check "Push to original repo"');
+      return;
+    }
+
+    // Show loading state
+    console.log('[Push to Hub] Starting push...');
+    showPushStatus('loading', 'Pushing to Hub... This may take a while for large datasets.');
+    pushHubBtn.disabled = true;
+    pushHubBtn.innerHTML = '<span class="spinner"></span> Pushing...';
+
+    try {
+      const payload = {
+        hf_token: token,
+        push_in_place: pushInPlace.checked,
+        new_repo_id: pushInPlace.checked ? null : newRepoId.value.trim(),
+        private: privateRepo ? privateRepo.checked : false,
+        commit_message: (commitMessage ? commitMessage.value.trim() : '') || 'Add annotations from LeRobot Annotate',
+      };
+      
+      console.log('[Push to Hub] Sending request with payload:', { ...payload, hf_token: '[HIDDEN]' });
+
+      const res = await fetch('/api/push_to_hub', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      console.log('[Push to Hub] Response status:', res.status);
+      const data = await res.json();
+      console.log('[Push to Hub] Response data:', data);
+      
+      if (res.ok) {
+        console.log('[Push to Hub] Success!');
+        showPushStatus('success', `${data.message}`, data.url);
+      } else {
+        console.error('[Push to Hub] Failed:', data.detail);
+        showPushStatus('error', data.detail || 'Push failed. Please check your token and try again.');
+      }
+    } catch (err) {
+      console.error('[Push to Hub] Error:', err);
+      showPushStatus('error', `Network error: ${err.message}. Please check your connection and try again.`);
+    } finally {
+      pushHubBtn.disabled = false;
+      pushHubBtn.textContent = 'Push to Hub';
+    }
+  });
+} else {
+  console.error('[Push to Hub] Button not found in DOM');
+}
 
 function showPushStatus(type, message, url = null) {
+  console.log('[Push to Hub] Showing status:', type, message);
+  
+  if (!pushHubStatus) {
+    console.error('[Push to Hub] Status element not found');
+    alert(`${type}: ${message}`);
+    return;
+  }
+  
   pushHubStatus.className = `helper status-${type}`;
   
   if (type === 'loading') {
