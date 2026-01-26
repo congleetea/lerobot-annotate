@@ -613,5 +613,10 @@ if (pushInPlace && newRepoRow) {
 }
 
 workspace.style.display = 'none';
-
+if (pushHubBtn) {
+  console.log('[App] Attaching event listener to pushHubBtn');
+  pushHubBtn.addEventListener('click', handlePushToHub);
+} else {
+  console.error('[App] pushHubBtn element not found');
+}
 console.log('[App] Script fully loaded and initialized');
