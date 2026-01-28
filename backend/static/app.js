@@ -214,7 +214,28 @@ function formatDuration(seconds) {
 
 function currentTime() {
   // The server now returns trimmed videos, so currentTime is the actual episode time
-  return Number(episodeVideo.currentTime.toFixed(2));
+  // Use 3 decimal places for millisecond precision
+  return Number(episodeVideo.currentTime.toFixed(3));
+}
+
+function formatTimeWithMs(seconds) {
+  // Format time as MM:SS.mmm for millisecond precision display
+  if (!seconds && seconds !== 0) return '00:00.000';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const ms = Math.floor((seconds % 1) * 1000);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
+}
+
+function updateTimeDisplay() {
+  const currentTimeDisplay = document.getElementById('currentTimeDisplay');
+  const totalTimeDisplay = document.getElementById('totalTimeDisplay');
+  if (currentTimeDisplay) {
+    currentTimeDisplay.textContent = formatTimeWithMs(episodeVideo.currentTime);
+  }
+  if (totalTimeDisplay && episodeVideo.duration) {
+    totalTimeDisplay.textContent = formatTimeWithMs(episodeVideo.duration);
+  }
 }
 
 function getEpisodeDuration() {
@@ -290,7 +311,7 @@ function renderSubtasks() {
 
     const startInput = document.createElement('input');
     startInput.type = 'number';
-    startInput.step = '0.01';
+    startInput.step = '0.001';
     startInput.value = seg.start;
     startInput.addEventListener('change', () => {
       seg.start = Number(startInput.value);
@@ -299,7 +320,7 @@ function renderSubtasks() {
 
     const endInput = document.createElement('input');
     endInput.type = 'number';
-    endInput.step = '0.01';
+    endInput.step = '0.001';
     endInput.value = seg.end;
     endInput.addEventListener('change', () => {
       seg.end = Number(endInput.value);
@@ -343,7 +364,7 @@ function renderHighLevels() {
 
     const startInput = document.createElement('input');
     startInput.type = 'number';
-    startInput.step = '0.01';
+    startInput.step = '0.001';
     startInput.value = seg.start;
     startInput.addEventListener('change', () => {
       seg.start = Number(startInput.value);
@@ -351,7 +372,7 @@ function renderHighLevels() {
 
     const endInput = document.createElement('input');
     endInput.type = 'number';
-    endInput.step = '0.01';
+    endInput.step = '0.001';
     endInput.value = seg.end;
     endInput.addEventListener('change', () => {
       seg.end = Number(endInput.value);
@@ -572,7 +593,11 @@ episodeSearch.addEventListener('input', renderEpisodes);
 episodeVideo.addEventListener('loadedmetadata', () => {
   // Server now returns trimmed videos, just render the timeline
   renderTimeline();
+  updateTimeDisplay();
 });
+
+// Update time display continuously during video playback
+episodeVideo.addEventListener('timeupdate', updateTimeDisplay);
 
 tabs.forEach(tab => {
   tab.addEventListener('click', () => {
