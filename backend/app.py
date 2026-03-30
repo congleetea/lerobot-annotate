@@ -594,6 +594,24 @@ app.add_middleware(
 manager = DataManager()
 
 
+SUBTASKS_FILE = APP_ROOT / "subtasks.txt"
+
+
+def load_subtask_labels() -> list[str]:
+    """Load subtask labels from subtasks.txt file."""
+    if not SUBTASKS_FILE.exists():
+        return []
+    lines = SUBTASKS_FILE.read_text().strip().split("\n")
+    return [line.strip() for line in lines if line.strip()]
+
+
+@app.get("/api/subtasks/labels")
+def get_subtask_labels() -> JSONResponse:
+    """Get predefined subtask labels from subtasks.txt."""
+    labels = load_subtask_labels()
+    return JSONResponse({"labels": labels})
+
+
 @app.get("/")
 def root() -> HTMLResponse:
     index_path = STATIC_DIR / "index.html"
