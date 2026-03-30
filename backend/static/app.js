@@ -145,6 +145,7 @@ const resetEpisodeBtn = document.getElementById('resetEpisode');
 const subtaskStart = document.getElementById('subtaskStart');
 const subtaskEnd = document.getElementById('subtaskEnd');
 const subtaskLabel = document.getElementById('subtaskLabel');
+const subtaskLabelCustom = document.getElementById('subtaskLabelCustom');
 const subtaskSetStart = document.getElementById('subtaskSetStart');
 const subtaskSetEnd = document.getElementById('subtaskSetEnd');
 const addSubtask = document.getElementById('addSubtask');
@@ -205,6 +206,59 @@ function setHelper(el, message, ok = false) {
   el.style.color = ok ? '#22c55e' : '#94a3b8';
 }
 
+// Load predefined subtask labels from server
+async function loadSubtaskLabels() {
+  try {
+    const res = await fetch('/api/subtasks/labels');
+    const data = await res.json();
+    if (res.ok && data.labels && data.labels.length > 0) {
+      // Populate the dropdown
+      subtaskLabel.innerHTML = '<option value="">-- Select a label --</option>';
+      data.labels.forEach(label => {
+        const option = document.createElement('option');
+        option.value = label;
+        option.textContent = label;
+        subtaskLabel.appendChild(option);
+      });
+      // Add "custom" option
+      const customOption = document.createElement('option');
+      customOption.value = '__custom__';
+      customOption.textContent = 'Custom (enter manually)';
+      subtaskLabel.appendChild(customOption);
+
+      // Show custom input when "custom" is selected
+      subtaskLabel.addEventListener('change', () => {
+        if (subtaskLabel.value === '__custom__') {
+          subtaskLabelCustom.style.display = 'block';
+          subtaskLabelCustom.focus();
+        } else {
+          subtaskLabelCustom.style.display = 'none';
+          subtaskLabelCustom.value = '';
+        }
+      });
+    } else {
+      // No predefined labels, just show text input
+      subtaskLabel.innerHTML = '<option value="">-- Enter label below --</option>';
+      subtaskLabelCustom.style.display = 'block';
+      subtaskLabelCustom.placeholder = 'Enter subtask label';
+    }
+  } catch (err) {
+    console.error('Failed to load subtask labels:', err);
+    // Fallback to text input
+    subtaskLabel.innerHTML = '<option value="">-- Enter label below --</option>';
+    subtaskLabelCustom.style.display = 'block';
+  }
+}
+
+// Get the current subtask label value (from dropdown or custom input)
+function getSubtaskLabelValue() {
+  const selected = subtaskLabel.value;
+  if (selected === '__custom__' || selected === '') {
+    return subtaskLabelCustom.value.trim();
+  }
+  return selected;
+}
+
 function formatDuration(seconds) {
   if (!seconds && seconds !== 0) return '';
   const mins = Math.floor(seconds / 60);
@@ -247,6 +301,8 @@ function resetEpisodeForm() {
   subtaskStart.value = '';
   subtaskEnd.value = '';
   subtaskLabel.value = '';
+  subtaskLabelCustom.value = '';
+  subtaskLabelCustom.style.display = 'none';
   hlStart.value = '';
   hlEnd.value = '';
   hlUser.value = '';
@@ -582,7 +638,7 @@ addSubtask.addEventListener('click', () => {
   if (state.currentEpisode == null) return;
   const start = Number(subtaskStart.value);
   const end = Number(subtaskEnd.value);
-  const label = subtaskLabel.value.trim();
+  const label = getSubtaskLabelValue();
   if (!label || Number.isNaN(start) || Number.isNaN(end) || end <= start) {
     return;
   }
@@ -590,7 +646,10 @@ addSubtask.addEventListener('click', () => {
   ann.subtasks.push({ start, end, label });
   renderSubtasks();
   renderTimeline();
+  // Reset label selection
   subtaskLabel.value = '';
+  subtaskLabelCustom.value = '';
+  subtaskLabelCustom.style.display = 'none';
 });
 
 hlSetStart.addEventListener('click', () => {
@@ -690,4 +749,7 @@ if (pushHubBtn) {
 } else {
   console.error('[App] pushHubBtn element not found');
 }
+
+// Load predefined subtask labels on page load
+loadSubtaskLabels();
 console.log('[App] Script fully loaded and initialized');
