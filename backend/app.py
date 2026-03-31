@@ -530,22 +530,17 @@ class DataManager:
 
 
 def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> pd.DataFrame:
-    """Build subtasks.parquet with all subtask segments across episodes.
+    """Build subtasks.parquet with unique subtask labels and their indices.
 
-    Each row contains: episode_index, subtask_index (order within episode), start, end, label
+    Each row contains: subtask_index (global), subtask (label name)
+    This is the original format expected by lerobot.
     """
-    rows = []
-    for ep_idx, ann in annotations.items():
-        sorted_segments = sorted(ann.subtasks, key=lambda s: float(s.get("start", 0)))
-        for seg_idx, seg in enumerate(sorted_segments):
-            rows.append({
-                "episode_index": ep_idx,
-                "subtask_index": seg_idx,
-                "start": seg.get("start", 0),
-                "end": seg.get("end", 0),
-                "label": seg.get("label", ""),
-            })
-    return pd.DataFrame(rows)
+    labels = sorted({seg["label"] for ann in annotations.values() for seg in ann.subtasks if seg.get("label")})
+    data = [{"subtask_index": idx, "subtask": label} for idx, label in enumerate(labels)]
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df = df.set_index("subtask")
+    return df
 
 
 def build_high_level_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
