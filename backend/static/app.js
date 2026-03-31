@@ -337,43 +337,22 @@ function renderEpisodes() {
   });
 }
 
-function buildSubtaskIndexMap(annotations) {
-  // Build a mapping from label to subtask_index (same logic as backend)
-  // This creates consistent subtask indices based on alphabetically sorted unique labels
-  const allLabels = new Set();
-  for (const epAnn of Object.values(annotations)) {
-    for (const seg of epAnn.subtasks || []) {
-      if (seg.label) {
-        allLabels.add(seg.label);
-      }
-    }
-  }
-  const sortedLabels = Array.from(allLabels).sort();
-  const subtaskMap = {};
-  sortedLabels.forEach((label, idx) => {
-    subtaskMap[label] = idx;
-  });
-  return subtaskMap;
-}
-
 function renderTimeline() {
   timeline.innerHTML = '';
   if (state.currentEpisode == null) return;
   const ann = getEpisodeAnnotations(state.currentEpisode);
-  const segments = ann.subtasks;
+  // Sort segments by start time and use index as subtask_index
+  const segments = [...ann.subtasks].sort((a, b) => a.start - b.start);
   // Use episode duration (not full video duration) for timeline
   const duration = getEpisodeDuration();
   if (!duration || segments.length === 0) return;
 
-  // Build subtask index map based on all annotations (consistent with export)
-  const subtaskMap = buildSubtaskIndexMap(state.annotations);
-
-  segments.forEach((seg) => {
+  segments.forEach((seg, idx) => {
     const span = document.createElement('span');
     const width = ((seg.end - seg.start) / duration) * 100;
     span.style.width = `${Math.max(width, 2)}%`;
-    // Get the actual subtask_index based on label
-    const subtaskIndex = subtaskMap[seg.label] ?? '?';
+    // subtask_index is the segment's position in the sorted episode (0, 1, 2, ...)
+    const subtaskIndex = idx;
     span.title = `subtask_index ${subtaskIndex}: ${seg.label} (${seg.start}s - ${seg.end}s)`;
     // Add subtask index as text inside the span
     span.textContent = subtaskIndex;
@@ -393,16 +372,14 @@ function renderSubtasks() {
   const ann = getEpisodeAnnotations(state.currentEpisode);
   ann.subtasks.sort((a, b) => a.start - b.start);
 
-  // Build subtask index map based on all annotations (consistent with export)
-  const subtaskMap = buildSubtaskIndexMap(state.annotations);
-
+  // subtask_index is the segment's position in the sorted episode (0, 1, 2, ...)
   ann.subtasks.forEach((seg, idx) => {
     const row = document.createElement('div');
     row.className = 'segment-item';
 
     // Add subtask_index badge
     const indexBadge = document.createElement('span');
-    const subtaskIndex = subtaskMap[seg.label] ?? '?';
+    const subtaskIndex = idx;
     indexBadge.textContent = subtaskIndex;
     indexBadge.title = `subtask_index: ${subtaskIndex}`;
     indexBadge.style.cssText = 'display: flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; background: var(--accent-2); color: #0b0e14; border-radius: 6px; font-weight: 600; font-size: 12px;';

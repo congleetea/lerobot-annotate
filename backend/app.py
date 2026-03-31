@@ -448,7 +448,7 @@ class DataManager:
             shutil.rmtree(dst_meta)
         shutil.copytree(src_meta, dst_meta)
 
-        subtasks_df, subtask_map = build_subtasks_dataframe(self.annotations)
+        subtasks_df = build_subtasks_dataframe(self.annotations)
         tasks_df, task_map = build_high_level_dataframe(self.annotations)
 
         if not subtasks_df.empty:
@@ -491,11 +491,10 @@ class DataManager:
                     continue
 
                 ep_mask = df["episode_index"] == ep_idx
-                if ann.subtasks and subtask_map:
+                if ann.subtasks:
                     df.loc[ep_mask, "subtask_index"] = assign_indices_by_segments(
                         df.loc[ep_mask, "timestamp"],
                         ann.subtasks,
-                        subtask_map,
                         label_key="label",
                     )
 
@@ -530,14 +529,23 @@ class DataManager:
         }
 
 
-def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
-    labels = sorted({seg["label"] for ann in annotations.values() for seg in ann.subtasks if seg.get("label")})
-    data = [{"subtask": label, "subtask_index": idx} for idx, label in enumerate(labels)]
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.set_index("subtask")
-    subtask_map = {label: idx for idx, label in enumerate(labels)}
-    return df, subtask_map
+def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> pd.DataFrame:
+    """Build subtasks.parquet with all subtask segments across episodes.
+
+    Each row contains: episode_index, subtask_index (order within episode), start, end, label
+    """
+    rows = []
+    for ep_idx, ann in annotations.items():
+        sorted_segments = sorted(ann.subtasks, key=lambda s: float(s.get("start", 0)))
+        for seg_idx, seg in enumerate(sorted_segments):
+            rows.append({
+                "episode_index": ep_idx,
+                "subtask_index": seg_idx,
+                "start": seg.get("start", 0),
+                "end": seg.get("end", 0),
+                "label": seg.get("label", ""),
+            })
+    return pd.DataFrame(rows)
 
 
 def build_high_level_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -584,7 +592,17 @@ def make_task_key(seg: dict[str, Any]) -> str:
     )
 
 
-def assign_indices_by_segments(timestamps: pd.Series, segments: list[dict[str, Any]], mapping: dict[str, int], label_key: str) -> list[int]:
+def assign_indices_by_segments(
+    timestamps: pd.Series,
+    segments: list[dict[str, Any]],
+    mapping: dict[str, int] | None = None,
+    label_key: str = "label",
+) -> list[int]:
+    """Assign indices to timestamps based on segments.
+
+    For subtasks (mapping=None): returns the segment's position in the sorted episode (0, 1, 2, ...)
+    For high-level tasks (mapping provided): returns the global index from the mapping
+    """
     values = [-1] * len(timestamps)
     if not segments:
         return values
@@ -597,10 +615,15 @@ def assign_indices_by_segments(timestamps: pd.Series, segments: list[dict[str, A
             end = float(seg.get("end", 0))
             is_last = seg_idx == len(segments_sorted) - 1
             if (start <= ts_val < end) or (is_last and ts_val <= end):
-                label = seg.get(label_key, "")
-                if label_key == "task_key":
-                    label = make_task_key(seg)
-                values[i] = mapping.get(label, -1)
+                if mapping is not None:
+                    # Use mapping for global index (high-level tasks)
+                    label = seg.get(label_key, "")
+                    if label_key == "task_key":
+                        label = make_task_key(seg)
+                    values[i] = mapping.get(label, -1)
+                else:
+                    # Use segment position for episode-local index (subtasks)
+                    values[i] = seg_idx
                 break
     return values
 
