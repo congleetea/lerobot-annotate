@@ -304,43 +304,77 @@ class DataManager:
 
     def _calculate_video_offsets(self, video_key: str, fps: float) -> dict[int, dict[str, float]]:
         """Get start/end times for each episode within its video file.
-        
+
         In LeRobot datasets, videos are concatenated so multiple episodes share
         the same video file. The timestamps are stored directly in the episode metadata
         as 'videos/{video_key}/from_timestamp' and 'videos/{video_key}/to_timestamp'.
+
+        If timestamp columns are not available, we calculate offsets by accumulating
+        durations of episodes that share the same video file (chunk_index + file_index).
         """
         if self.episodes_df is None:
             return {}
-        
+
         from_ts_col = f"videos/{video_key}/from_timestamp"
         to_ts_col = f"videos/{video_key}/to_timestamp"
-        
+        chunk_col = f"videos/{video_key}/chunk_index"
+        file_col = f"videos/{video_key}/file_index"
+
         # Check if timestamp columns exist in the dataframe
         has_timestamp_cols = from_ts_col in self.episodes_df.columns and to_ts_col in self.episodes_df.columns
-        
+        has_video_path_cols = chunk_col in self.episodes_df.columns and file_col in self.episodes_df.columns
+
         result = {}
-        for _, row in self.episodes_df.iterrows():
-            ep_idx = int(row["episode_index"])
-            length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
-            duration = length / fps if fps else 0.0
-            
-            # Use the actual timestamps from the episode metadata if available
-            if has_timestamp_cols:
+
+        if has_timestamp_cols:
+            # Use the actual timestamps from the episode metadata
+            for _, row in self.episodes_df.iterrows():
+                ep_idx = int(row["episode_index"])
                 from_ts = row.get(from_ts_col)
                 to_ts = row.get(to_ts_col)
-                # Handle NaN/None values
                 if pd.notna(from_ts) and pd.notna(to_ts):
                     result[ep_idx] = {
                         "video_start_time": float(from_ts),
                         "video_end_time": float(to_ts),
                     }
                 else:
-                    # Fallback if timestamps are null
+                    # Fallback if timestamps are null for this specific episode
+                    length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+                    duration = length / fps if fps else 0.0
                     result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
-            else:
-                # Fallback: assume each episode starts at 0 (individual video file per episode)
+        elif has_video_path_cols:
+            # Calculate offsets by accumulating durations within the same video file
+            # Group episodes by their video file (chunk_index + file_index)
+            video_file_times: dict[tuple[int, int], float] = {}  # (chunk, file) -> accumulated start time
+
+            for _, row in self.episodes_df.iterrows():
+                ep_idx = int(row["episode_index"])
+                chunk_idx = int(row[chunk_col])
+                file_idx = int(row[file_col])
+                length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+                duration = length / fps if fps else 0.0
+
+                video_key_tuple = (chunk_idx, file_idx)
+
+                # Get the accumulated start time for this video file
+                start_time = video_file_times.get(video_key_tuple, 0.0)
+                end_time = start_time + duration
+
+                result[ep_idx] = {
+                    "video_start_time": start_time,
+                    "video_end_time": end_time,
+                }
+
+                # Update accumulated time for this video file
+                video_file_times[video_key_tuple] = end_time
+        else:
+            # Fallback: assume each episode has its own video file
+            for _, row in self.episodes_df.iterrows():
+                ep_idx = int(row["episode_index"])
+                length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+                duration = length / fps if fps else 0.0
                 result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
-        
+
         return result
 
     def get_episode_video_path(self, episode_index: int, video_key: str | None = None) -> Path:
@@ -414,7 +448,7 @@ class DataManager:
             shutil.rmtree(dst_meta)
         shutil.copytree(src_meta, dst_meta)
 
-        subtasks_df, subtask_map = build_subtasks_dataframe(self.annotations)
+        subtasks_df = build_subtasks_dataframe(self.annotations)
         tasks_df, task_map = build_high_level_dataframe(self.annotations)
 
         if not subtasks_df.empty:
@@ -457,11 +491,10 @@ class DataManager:
                     continue
 
                 ep_mask = df["episode_index"] == ep_idx
-                if ann.subtasks and subtask_map:
+                if ann.subtasks:
                     df.loc[ep_mask, "subtask_index"] = assign_indices_by_segments(
                         df.loc[ep_mask, "timestamp"],
                         ann.subtasks,
-                        subtask_map,
                         label_key="label",
                     )
 
@@ -496,14 +529,23 @@ class DataManager:
         }
 
 
-def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
-    labels = sorted({seg["label"] for ann in annotations.values() for seg in ann.subtasks if seg.get("label")})
-    data = [{"subtask": label, "subtask_index": idx} for idx, label in enumerate(labels)]
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.set_index("subtask")
-    subtask_map = {label: idx for idx, label in enumerate(labels)}
-    return df, subtask_map
+def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> pd.DataFrame:
+    """Build subtasks.parquet with all subtask segments across episodes.
+
+    Each row contains: episode_index, subtask_index (order within episode), start, end, label
+    """
+    rows = []
+    for ep_idx, ann in annotations.items():
+        sorted_segments = sorted(ann.subtasks, key=lambda s: float(s.get("start", 0)))
+        for seg_idx, seg in enumerate(sorted_segments):
+            rows.append({
+                "episode_index": ep_idx,
+                "subtask_index": seg_idx,
+                "start": seg.get("start", 0),
+                "end": seg.get("end", 0),
+                "label": seg.get("label", ""),
+            })
+    return pd.DataFrame(rows)
 
 
 def build_high_level_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -550,7 +592,17 @@ def make_task_key(seg: dict[str, Any]) -> str:
     )
 
 
-def assign_indices_by_segments(timestamps: pd.Series, segments: list[dict[str, Any]], mapping: dict[str, int], label_key: str) -> list[int]:
+def assign_indices_by_segments(
+    timestamps: pd.Series,
+    segments: list[dict[str, Any]],
+    mapping: dict[str, int] | None = None,
+    label_key: str = "label",
+) -> list[int]:
+    """Assign indices to timestamps based on segments.
+
+    For subtasks (mapping=None): returns the segment's position in the sorted episode (0, 1, 2, ...)
+    For high-level tasks (mapping provided): returns the global index from the mapping
+    """
     values = [-1] * len(timestamps)
     if not segments:
         return values
@@ -563,10 +615,15 @@ def assign_indices_by_segments(timestamps: pd.Series, segments: list[dict[str, A
             end = float(seg.get("end", 0))
             is_last = seg_idx == len(segments_sorted) - 1
             if (start <= ts_val < end) or (is_last and ts_val <= end):
-                label = seg.get(label_key, "")
-                if label_key == "task_key":
-                    label = make_task_key(seg)
-                values[i] = mapping.get(label, -1)
+                if mapping is not None:
+                    # Use mapping for global index (high-level tasks)
+                    label = seg.get(label_key, "")
+                    if label_key == "task_key":
+                        label = make_task_key(seg)
+                    values[i] = mapping.get(label, -1)
+                else:
+                    # Use segment position for episode-local index (subtasks)
+                    values[i] = seg_idx
                 break
     return values
 
